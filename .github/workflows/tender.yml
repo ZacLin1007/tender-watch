@@ -33,6 +33,14 @@ jobs:
       - name: 執行爬蟲
         run: python tender_watch.py
 
+      - name: 上傳除錯頁面(給開發者看的)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-pages
+          path: debug/
+          if-no-files-found: ignore
+
       - name: Commit 更新後的儀表板
         run: |
           git config user.name "tender-bot"
