@@ -92,10 +92,10 @@ def load_json(path: Path, default):
 # ---------------------------------------------------------------- 抓取
 
 def fetch_list_for_org(session: requests.Session, org_kw: str, days: int):
-    """依機關名稱關鍵字查詢近 N 天的招標公告，回傳案件 dict 清單。"""
+    """依機關名稱查詢招標公告。會依序嘗試多種查詢策略，用成功的那個。"""
     end = datetime.now()
     start = end - timedelta(days=days)
-    params = {
+    base_params = {
         "firstSearch": "true",
         "searchType": "basic",
         "isBinding": "N",
@@ -105,39 +105,56 @@ def fetch_list_for_org(session: requests.Session, org_kw: str, days: int):
         "orgId": "",
         "tenderName": "",
         "tenderId": "",
-        "tenderType": "TENDER_DECLARATION",            # 招標公告
-        "tenderWay": "TENDER_WAY_ALL_DECLARATION",     # 所有招標方式
-        "dateType": "isDate",
-        "tenderStartDate": roc_date(start),
-        "tenderEndDate": roc_date(end),
+        "tenderType": "TENDER_DECLARATION",
+        "tenderWay": "TENDER_WAY_ALL_DECLARATION",
         "radProctrgCate": "",
         "policyAdvocacy": "",
         "pageSize": "100",
     }
-    print(f"  查詢: {org_kw} ({params['tenderStartDate']} ~ {params['tenderEndDate']})")
-    r = session.get(PCC_SEARCH_URL, params=params, headers=HEADERS, timeout=30)
-    # ---- 除錯資訊 ----
-    print(f"    [除錯] HTTP狀態={r.status_code} 回應長度={len(r.text)}")
-    print(f"    [除錯] 實際網址={r.url[:150]}")
+    # 先逛一次查詢首頁拿 session cookie(很多政府網站沒 cookie 會查不到東西)
+    try:
+        session.get(PCC_BASE + "/prkms/tender/common/basic/indexTenderBasic",
+                    headers=HEADERS, timeout=30)
+    except Exception as e:
+        print(f"    [除錯] 取得首頁cookie失敗(繼續嘗試): {e}")
+
+    strategies = [
+        ("等標期內(isSpdt)", "GET",  {**base_params, "dateType": "isSpdt"}),
+        ("日期區間GET",      "GET",  {**base_params, "dateType": "isDate",
+                                      "tenderStartDate": roc_date(start),
+                                      "tenderEndDate": roc_date(end)}),
+        ("日期區間POST",     "POST", {**base_params, "dateType": "isDate",
+                                      "tenderStartDate": roc_date(start),
+                                      "tenderEndDate": roc_date(end)}),
+    ]
     debug_dir = BASE_DIR / "debug"
     debug_dir.mkdir(exist_ok=True)
     safe = re.sub(r"[^\w]", "_", org_kw)
-    (debug_dir / f"list_{safe}.html").write_text(r.text, encoding="utf-8", errors="ignore")
-    low = r.text
-    for kw, mean in [("驗證碼", "出現驗證碼(被當機器人)"), ("captcha", "出現CAPTCHA"),
-                     ("拒絕", "疑似被拒絕存取"), ("Access Denied", "Access Denied 被擋"),
-                     ("cloudflare", "被Cloudflare攔截")]:
-        if kw in low:
-            print(f"    [除錯] 頁面內出現「{kw}」-> {mean}")
-    r.raise_for_status()
-    items = parse_list_html(r.text, org_kw)
-    if not items:
-        import html as _h
-        text_only = re.sub(r"<[^>]+>", " ", low)
-        text_only = _h.unescape(re.sub(r"\s+", " ", text_only)).strip()
-        print(f"    [除錯] 解析0筆。頁面文字開頭400字: {text_only[:400]}")
-        print(f"    [除錯] 頁面含<table>數量: {low.count('<table')}, <tr>數量: {low.count('<tr')}")
-    return items
+
+    for i, (name, method, params) in enumerate(strategies, 1):
+        print(f"  查詢: {org_kw} [策略{i}: {name}]")
+        try:
+            if method == "GET":
+                r = session.get(PCC_SEARCH_URL, params=params, headers=HEADERS, timeout=30)
+            else:
+                r = session.post(PCC_SEARCH_URL, data=params, headers=HEADERS, timeout=30)
+        except Exception as e:
+            print(f"    [除錯] 連線失敗: {e}")
+            continue
+        print(f"    [除錯] HTTP={r.status_code} 長度={len(r.text)}")
+        (debug_dir / f"list_{safe}_策略{i}.html").write_text(
+            r.text, encoding="utf-8", errors="ignore")
+        m = re.search(r"共有\s*(\d+)\s*筆", r.text)
+        if m:
+            print(f"    [除錯] 網站回報共 {m.group(1)} 筆")
+        if r.status_code != 200:
+            continue
+        items = parse_list_html(r.text, org_kw)
+        if items:
+            print(f"    -> 策略{i}成功，解析到 {len(items)} 筆")
+            return items
+    print(f"    -> 所有策略都是 0 筆")
+    return []
 
 
 def parse_list_html(html: str, org_kw: str):
