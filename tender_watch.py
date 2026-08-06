@@ -157,60 +157,58 @@ def fetch_list_for_org(session: requests.Session, org_kw: str, days: int):
     return []
 
 
+def cell_text(td):
+    """取表格儲存格文字。政府網站把部分文字藏在 pageCode2Img("...") 的JS裡，優先從那裡取。"""
+    m = re.search(r'pageCode2Img\("([^"]*)"', str(td))
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    return td.get_text(" ", strip=True)
+
+
 def parse_list_html(html: str, org_kw: str):
-    """解析查詢結果列表頁。政府網站改版時最可能要調整的就是這個函式。"""
+    """解析查詢結果列表頁(id=tpam 的表格)。
+    欄位順序: 0項次 1機關名稱 2案號+標案名稱 3傳輸次數 4招標方式 5採購性質 6公告日期 7截止投標 8預算金額 9功能選項
+    政府網站改版時最可能要調整的就是這個函式。"""
     soup = BeautifulSoup(html, "lxml")
     items = []
     table = soup.find(id="tpam") or soup.find("table", class_=re.compile("tb_"))
-    rows = table.find_all("tr") if table else soup.find_all("tr")
-    for tr in rows:
+    if table is None:
+        print("    [除錯] 找不到結果表格(id=tpam)")
+        return items
+    for tr in table.find_all("tr"):
         tds = tr.find_all("td")
-        if len(tds) < 5:
+        if len(tds) < 9:
+            continue  # 表頭或提示列
+        cell = [td.get_text(" ", strip=True) for td in tds]
+        if not re.search(r"\d{2,3}/\d{1,2}/\d{1,2}", " ".join(cell)):
             continue
-        link = tr.find("a", href=True)
-        row_text = [td.get_text(" ", strip=True) for td in tds]
-        joined = " | ".join(row_text)
-        if not any(re.search(r"\d{2,3}/\d{1,2}/\d{1,2}", t) for t in row_text):
-            continue  # 沒日期的列(表頭等)跳過
-        # 常見欄位順序: 項次 | 機關名稱 | 標案案號/標案名稱 | 傳輸次數 | 招標方式 | 採購性質 | 公告日期 | 截止投標 | 預算金額
+        c2 = tds[2]
+        # 標案名稱藏在 pageCode2Img("...") 裡; 案號是 <br> 前的純文字
+        m = re.search(r'pageCode2Img\("([^"]*)"', str(c2))
+        title = m.group(1).strip() if m else ""
+        if not title:
+            title = cell[2]
+        first_text = c2.find(string=True)
+        case_no = first_text.strip() if first_text else ""
+        a = c2.find("a", href=True) or tr.find("a", href=True)
+        url = ""
+        if a:
+            href = a["href"]
+            url = href if href.startswith("http") else PCC_BASE + href
         item = {
-            "org": "", "title": "", "case_no": "",
-            "method": "", "category": "",
-            "publish_date": None, "deadline": None,
-            "open_date": None, "budget": None,
-            "qualification": "", "url": "",
+            "org": cell[1] or org_kw,
+            "title": title,
+            "case_no": case_no,
+            "method": cell[4],
+            "category": cell[5],
+            "publish_date": parse_roc_datetime(cell[6]),
+            "deadline": parse_roc_datetime(cell[7]),
+            "open_date": None,
+            "budget": parse_money(cell[8]) if re.search(r"\d", cell[8]) else None,
+            "qualification": "",
+            "url": url,
             "source": "政府電子採購網",
         }
-        if link:
-            href = link["href"]
-            item["url"] = href if href.startswith("http") else PCC_BASE + href
-            item["title"] = link.get_text(" ", strip=True)
-        # 逐欄猜測內容
-        dates = []
-        for t in row_text:
-            if org_kw.split("局")[0][:4] in t or "管理處" in t or "分局" in t:
-                if not item["org"]:
-                    item["org"] = t
-            iso = parse_roc_datetime(t)
-            if iso and re.fullmatch(r"[\d/\s:]+", t.strip()):
-                dates.append(iso)
-            if re.search(r"公開招標|限制性招標|選擇性招標|公開取得", t):
-                item["method"] = t
-            if re.fullmatch(r"工程類?|財物類?|勞務類?", t.strip()):
-                item["category"] = t.strip()
-            money = parse_money(t) if re.search(r"^[\d,]+$", t.strip()) else None
-            if money and money > 10000:
-                item["budget"] = money
-        if dates:
-            item["publish_date"] = dates[0]
-            if len(dates) >= 2:
-                item["deadline"] = dates[1]
-        # 案號通常和標題同一格: "114A123 某某工程"
-        m = re.match(r"([A-Za-z0-9\-]+)\s+(.+)", item["title"])
-        if m and len(m.group(1)) >= 5:
-            item["case_no"], item["title"] = m.group(1), m.group(2)
-        if not item["org"]:
-            item["org"] = org_kw
         if item["title"]:
             items.append(item)
     print(f"    -> 解析到 {len(items)} 筆")
@@ -238,8 +236,8 @@ def fetch_detail(session: requests.Session, item: dict):
         for tr in soup.find_all("tr"):
             cells = tr.find_all(["th", "td"])
             if len(cells) >= 2:
-                k = cells[0].get_text(" ", strip=True)
-                v = cells[1].get_text(" ", strip=True)
+                k = cell_text(cells[0])
+                v = cell_text(cells[1])
                 if k:
                     pairs[k] = v
         def find(keys):
@@ -537,13 +535,15 @@ def run():
             seen.add(key)
             uniq.append(it)
 
+    # 先用列表頁資料篩一輪(金額/標題)，再只對保留的案子抓詳細頁，省時且對網站更禮貌
+    kept, dropped = apply_filters(uniq, cfg)
     if cfg.get("抓詳細頁", True):
-        print(f"\n抓取 {len(uniq)} 件詳細頁(每件間隔2秒)…")
-        for it in uniq:
+        print(f"\n抓取 {len(kept)} 件詳細頁(每件間隔2秒)…")
+        for it in kept:
             fetch_detail(session, it)
             time.sleep(2)
-
-    kept, dropped = apply_filters(uniq, cfg)
+        kept, dropped2 = apply_filters(kept, cfg)  # 詳細頁的資格/金額再篩一次
+        dropped += dropped2
     for d in dropped:
         print(f"  剔除: {d['title'][:30]} <- {d['_dropped']}")
 
