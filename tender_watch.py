@@ -116,8 +116,28 @@ def fetch_list_for_org(session: requests.Session, org_kw: str, days: int):
     }
     print(f"  查詢: {org_kw} ({params['tenderStartDate']} ~ {params['tenderEndDate']})")
     r = session.get(PCC_SEARCH_URL, params=params, headers=HEADERS, timeout=30)
+    # ---- 除錯資訊 ----
+    print(f"    [除錯] HTTP狀態={r.status_code} 回應長度={len(r.text)}")
+    print(f"    [除錯] 實際網址={r.url[:150]}")
+    debug_dir = BASE_DIR / "debug"
+    debug_dir.mkdir(exist_ok=True)
+    safe = re.sub(r"[^\w]", "_", org_kw)
+    (debug_dir / f"list_{safe}.html").write_text(r.text, encoding="utf-8", errors="ignore")
+    low = r.text
+    for kw, mean in [("驗證碼", "出現驗證碼(被當機器人)"), ("captcha", "出現CAPTCHA"),
+                     ("拒絕", "疑似被拒絕存取"), ("Access Denied", "Access Denied 被擋"),
+                     ("cloudflare", "被Cloudflare攔截")]:
+        if kw in low:
+            print(f"    [除錯] 頁面內出現「{kw}」-> {mean}")
     r.raise_for_status()
-    return parse_list_html(r.text, org_kw)
+    items = parse_list_html(r.text, org_kw)
+    if not items:
+        import html as _h
+        text_only = re.sub(r"<[^>]+>", " ", low)
+        text_only = _h.unescape(re.sub(r"\s+", " ", text_only)).strip()
+        print(f"    [除錯] 解析0筆。頁面文字開頭400字: {text_only[:400]}")
+        print(f"    [除錯] 頁面含<table>數量: {low.count('<table')}, <tr>數量: {low.count('<tr')}")
+    return items
 
 
 def parse_list_html(html: str, org_kw: str):
