@@ -563,6 +563,9 @@ DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
   .caseno{font:700 11px var(--mono);color:var(--gold-d);letter-spacing:.05em}
   .rg{display:inline-block;font-size:10px;padding:1px 6px;border-radius:3px;
       background:var(--navy);color:#fff;margin-left:6px;vertical-align:1px}
+  .nb{display:inline-block;font:700 10px var(--mono);padding:1px 6px;border-radius:3px;
+      background:var(--gold);color:var(--navy);margin-left:6px;vertical-align:1px;
+      letter-spacing:.05em}
   .t{grid-column:1;font-size:14px;font-weight:500;line-height:1.5;color:var(--navy)}
   .meta{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:3px 14px;
         font-size:11.5px;color:var(--grayblue);line-height:1.8}
@@ -632,6 +635,7 @@ DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
       </div>
       <div class="chiprow" id="stChips"><span class="lab">狀態</span>
         <span class="chip on" data-v="all">全部</span>
+        <span class="chip" data-v="new">本週新公告</span>
         <span class="chip" data-v="open">投標中</span>
         <span class="chip" data-v="hot">3天內</span>
         <span class="chip" data-v="done">已截止</span>
@@ -687,6 +691,10 @@ function money(n){ if(!n) return '未公告';
   if(n>=1e8) return (n/1e8).toFixed(2).replace(/\.?0+$/,'')+'億';
   if(n>=1e4) return Math.round(n/1e4).toLocaleString()+'萬';
   return n.toLocaleString();}
+function daysSincePub(d, now){
+  if(!d.publish_date) return 999;
+  return (now - new Date(d.publish_date)) / 864e5;
+}
 function orgShort(o){return o.replace('交通部觀光署','').replace('交通部','').replace('經濟部','').replace('國家風景區',''); }
 
 let F={q:'', orgs:new Set(), rg:'all', st:'all', cat:'all', bg:'all'};
@@ -771,6 +779,7 @@ function passes(d, st){
   if(!F.orgs.has(d.org)) return false;
   if(F.q && !((d.title||'')+(d.case_no||'')+(d.loc||'')).includes(F.q)) return false;
   if(F.rg!=='all' && d.region!==F.rg) return false;
+  if(F.st==='new'&&daysSincePub(d,new Date())>7) return false;
   if(F.st==='open'&&st.cls==='done') return false;
   if(F.st==='hot'&&st.cls!=='hot') return false;
   if(F.st==='done'&&st.cls!=='done') return false;
@@ -832,12 +841,14 @@ function render(){
     const d=r.d;
     return '<div class="card '+r.st.cls+'" data-i="'+r.i+'">'
      +'<div><span class="caseno">'+(d.case_no||'—')+'</span>'
-     +(d.region?'<span class="rg">'+d.region+'</span>':'')+'</div>'
+     +(d.region?'<span class="rg">'+d.region+'</span>':'')
+     +(daysSincePub(d,now)<=3?'<span class="nb">NEW</span>':'')+'</div>'
      +'<div class="cd"><div class="num" data-cd="'+r.i+'">'+cdText(d,now)+'</div><div class="lab">距截止投標</div></div>'
      +'<div class="t">'+d.title+'</div>'
      +'<div class="meta">'
        +'<span>'+orgShort(d.org)+'</span>'
        +(d.loc?'<span class="loc'+(d.loc_src==='org'?' approx':'')+'">📍'+d.loc+'</span>':'')
+       +(d.publish_date?'<span>公告 <b>'+fmtD(d.publish_date).split(' ')[0]+'</b></span>':'')
        +'<span>預算 <b>'+money(d.budget)+'</b></span>'
        +'<span>截止 <b>'+fmtD(d.deadline)+'</b></span>'
        +(d.open_date?'<span>開標 <b>'+fmtD(d.open_date)+'</b></span>':'')
