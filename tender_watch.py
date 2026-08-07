@@ -540,6 +540,11 @@ DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         transition:all .12s}
   .chip:hover{border-color:var(--gold);color:var(--navy)}
   .chip.on{color:var(--navy);background:var(--gold);border-color:var(--gold);font-weight:700}
+  .chip .n{font-family:var(--mono);font-size:10px;margin-left:5px;opacity:.85}
+  .chip .x{font-style:normal;margin-left:6px;opacity:.7;padding:0 3px}
+  .chip.partial{background:#fff;border-color:var(--gold);color:var(--gold-d);font-weight:700}
+  .subrow{background:var(--bg);border:1px dashed var(--line2);border-radius:6px;
+          padding:6px 8px;margin-left:26px}
 
   /* ── 清單 ── */
   #list{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;
@@ -616,7 +621,8 @@ DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
   <aside>
     <div class="filters">
       <input type="search" id="q" placeholder="搜尋標案名稱、案號、地點…">
-      <div class="chiprow" id="orgChips"><span class="lab">機關</span></div>
+      <div class="chiprow" id="sysChips"><span class="lab">機關</span></div>
+      <div class="chiprow subrow" id="subChips" style="display:none"></div>
       <div class="chiprow" id="rgChips"><span class="lab">區域</span>
         <span class="chip on" data-v="all">全部</span>
         <span class="chip" data-v="北部">北部</span>
@@ -694,19 +700,72 @@ function chipify(elId, key){
 chipify('rgChips','rg'); chipify('stChips','st'); chipify('catChips','cat'); chipify('bgChips','bg');
 document.getElementById('q').addEventListener('input', e=>{F.q=e.target.value.trim(); render();});
 
-const orgBox=document.getElementById('orgChips');
+/* ── 機關兩層式篩選: 母系統(帶件數) -> ▾ 展開分支 ── */
+const SYS_ORDER=['公路局','水利署','高速公路局','參山處','其他'];
+function sysOf(o){
+  if(o.includes('水利署'))return'水利署';
+  if(o.includes('高速公路'))return'高速公路局';
+  if(o.includes('參山'))return'參山處';
+  if(o.includes('公路'))return'公路局';
+  return'其他';
+}
+function branchName(o){
+  const n=o.replace('經濟部水利署','').replace('交通部高速公路局','')
+           .replace('交通部公路局','').replace('交通部觀光署','').replace('國家風景區','');
+  return n||'署(局)本部';
+}
+const SYS={};
 [...new Set(DATA.map(d=>d.org))].forEach(o=>{
   F.orgs.add(o);
-  const c=document.createElement('span'); c.className='chip on'; c.dataset.org=o;
-  c.textContent=orgShort(o).slice(0,13); orgBox.appendChild(c);
+  const s=sysOf(o); (SYS[s]=SYS[s]||[]).push(o);
 });
-orgBox.addEventListener('click', e=>{
+const CNT={}; DATA.forEach(d=>{const s=sysOf(d.org); CNT[s]=(CNT[s]||0)+1;});
+const sysBox=document.getElementById('sysChips'), subBox=document.getElementById('subChips');
+let expanded=null;
+SYS_ORDER.filter(s=>SYS[s]).forEach(s=>{
+  const c=document.createElement('span'); c.className='chip on sys'; c.dataset.sys=s;
+  c.innerHTML=s+' <b class="n">'+(CNT[s]||0)+'</b>'+(SYS[s].length>1?'<i class="x">▾</i>':'');
+  sysBox.appendChild(c);
+});
+function sysState(s){
+  const on=SYS[s].filter(o=>F.orgs.has(o)).length;
+  return on===0?'off': on===SYS[s].length?'on':'partial';
+}
+function refreshChips(){
+  sysBox.querySelectorAll('.sys').forEach(c=>{
+    const st=sysState(c.dataset.sys);
+    c.classList.toggle('on',st==='on'); c.classList.toggle('partial',st==='partial');
+  });
+  if(expanded){
+    subBox.style.display='flex'; subBox.innerHTML='';
+    SYS[expanded].forEach(o=>{
+      const c=document.createElement('span');
+      c.className='chip'+(F.orgs.has(o)?' on':''); c.dataset.org=o;
+      c.textContent=branchName(o);
+      subBox.appendChild(c);
+    });
+  } else subBox.style.display='none';
+}
+sysBox.addEventListener('click',e=>{
+  const c=e.target.closest('.sys'); if(!c) return;
+  const s=c.dataset.sys;
+  if(e.target.closest('.x')){ expanded = expanded===s? null : s; refreshChips(); return; }
+  if(sysState(s)==='on'){
+    if([...F.orgs].filter(o=>sysOf(o)!==s).length===0) return; /* 至少留一個系統 */
+    SYS[s].forEach(o=>F.orgs.delete(o));
+  } else {
+    SYS[s].forEach(o=>F.orgs.add(o));
+  }
+  refreshChips(); render();
+});
+subBox.addEventListener('click',e=>{
   const c=e.target.closest('.chip'); if(!c) return;
   const o=c.dataset.org;
-  if(F.orgs.has(o)&&F.orgs.size>1){F.orgs.delete(o);c.classList.remove('on');}
-  else{F.orgs.add(o);c.classList.add('on');}
-  render();
+  if(F.orgs.has(o)){ if(F.orgs.size>1) F.orgs.delete(o); }
+  else F.orgs.add(o);
+  refreshChips(); render();
 });
+refreshChips();
 
 function passes(d, st){
   if(!F.orgs.has(d.org)) return false;
