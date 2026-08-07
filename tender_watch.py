@@ -419,6 +419,19 @@ def locate(item):
     item.update(lat=None, lng=None, loc="", loc_src="none")
 
 
+def region_of(lat, lng):
+    """依座標粗分台灣四區(示意用): 宜蘭歸北部、雲林歸中部、嘉義歸南部、花東歸東部。"""
+    if lat is None:
+        return ""
+    if (lng >= 121.35 and lat <= 24.35) or (lng >= 121.0 and lat <= 23.35):
+        return "東部"
+    if lat >= 24.62 or lng >= 121.3:
+        return "北部"
+    if lat > 23.55:
+        return "中部"
+    return "南部"
+
+
 def jitter(items):
     """同座標的案子稍微錯開，避免地圖標記完全疊在一起。"""
     from collections import defaultdict
@@ -477,103 +490,111 @@ DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
   :root{
-    /* 公路夜色: 路牌綠黑底 + 標線黃 */
-    --bg:#131d18; --panel:#1a2721; --panel2:#20302a; --line:#2c4038;
-    --ink:#eef4ef; --dim:#8fa79a;
-    --lane:#f5c842;              /* 標線黃(主互動色) */
-    --hot:#ff6b5d; --warn:#f5c842; --safe:#57c88a; --done:#5d6d64;
+    /* 美安品牌色 */
+    --navy:#0C1E3C;      /* 主色 深藍 */
+    --gold:#C9A45C;      /* 輔色 金 */
+    --gold-d:#9C7A32;    /* 金(深, 白底文字用) */
+    --grayblue:#55637A;  /* 內文 灰藍 */
+    --bg:#F7F8FA;        /* 底色 淺灰 */
+    --panel:#FFFFFF; --line:#E2E6EE; --line2:#CBD3E0;
+    --hot:#D6455A; --warn:#E08A2E; --safe:#2F9E6C; --done:#9AA4B2;
     --mono:"IBM Plex Mono",monospace;
     font-family:"Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
-  body{background:var(--bg);color:var(--ink);display:flex;flex-direction:column;overflow:hidden}
+  body{background:var(--bg);color:var(--navy);display:flex;flex-direction:column;overflow:hidden}
 
-  /* ── 頁首 ── */
+  /* ── 頁首(品牌深藍) ── */
   header{display:flex;align-items:center;gap:18px;padding:12px 18px;
-         border-bottom:2px solid var(--lane);background:var(--panel)}
-  .brand{display:flex;align-items:center;gap:10px}
-  .shield{width:34px;height:38px;background:var(--lane);color:#1b2a23;
+         background:var(--navy);color:#fff;border-bottom:3px solid var(--gold)}
+  .brand{display:flex;align-items:center;gap:11px}
+  .shield{width:34px;height:38px;background:var(--gold);color:var(--navy);
           clip-path:polygon(50% 0,100% 18%,100% 72%,50% 100%,0 72%,0 18%);
-          display:flex;align-items:center;justify-content:center;
-          font:700 15px var(--mono)}
+          display:flex;align-items:center;justify-content:center;font:700 15px var(--mono)}
   h1{font-size:17px;font-weight:900;letter-spacing:.14em}
-  h1 small{display:block;font:500 10px var(--mono);color:var(--dim);letter-spacing:.22em}
-  .stats{margin-left:auto;display:flex;gap:22px;text-align:right}
-  .stat b{display:block;font:700 20px var(--mono);line-height:1}
-  .stat span{font-size:11px;color:var(--dim)}
-  .stat.hot b{color:var(--hot)}
-  .updated{font:500 11px var(--mono);color:var(--dim)}
+  h1 small{display:block;font:500 10px var(--mono);color:var(--gold);letter-spacing:.24em}
+  .stats{margin-left:auto;display:flex;gap:24px;text-align:right}
+  .stat b{display:block;font:700 20px var(--mono);line-height:1;color:#fff}
+  .stat span{font-size:11px;color:#B9C3D6}
+  .stat.hot b{color:#FF8B9A}
+  .updated{font:500 12px var(--mono);color:var(--gold)}
 
-  /* ── 主格局 ── */
   main{flex:1;display:grid;grid-template-columns:470px 1fr;min-height:0}
-  aside{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line)}
+  aside{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line2);
+        background:var(--bg)}
   #map{min-height:0}
 
-  /* ── 篩選區 ── */
+  /* ── 篩選 ── */
   .filters{padding:12px 14px;display:flex;flex-direction:column;gap:9px;
-           border-bottom:1px solid var(--line);background:var(--panel)}
-  input[type=search]{background:var(--bg);border:1px solid var(--line);color:var(--ink);
+           background:var(--panel);border-bottom:1px solid var(--line2)}
+  input[type=search]{background:var(--bg);border:1px solid var(--line2);color:var(--navy);
         padding:8px 12px;border-radius:6px;font-size:13px;width:100%}
-  input[type=search]:focus{outline:2px solid var(--lane);outline-offset:0;border-color:var(--lane)}
+  input[type=search]::placeholder{color:#9AA4B2}
+  input[type=search]:focus{outline:2px solid var(--gold);outline-offset:0;border-color:var(--gold)}
   .chiprow{display:flex;flex-wrap:wrap;gap:6px}
-  .chiprow .lab{font-size:11px;color:var(--dim);align-self:center;margin-right:2px;
+  .chiprow .lab{font-size:11px;color:var(--grayblue);align-self:center;margin-right:2px;
                 font-family:var(--mono);letter-spacing:.1em}
-  .chip{border:1px solid var(--line);background:transparent;color:var(--dim);
+  .chip{border:1px solid var(--line2);background:#fff;color:var(--grayblue);
         padding:4px 11px;border-radius:4px;font-size:12px;cursor:pointer;user-select:none;
         transition:all .12s}
-  .chip:hover{border-color:var(--lane);color:var(--ink)}
-  .chip.on{color:#1b2a23;background:var(--lane);border-color:var(--lane);font-weight:700}
+  .chip:hover{border-color:var(--gold);color:var(--navy)}
+  .chip.on{color:var(--navy);background:var(--gold);border-color:var(--gold);font-weight:700}
 
   /* ── 清單 ── */
   #list{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;
-        scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+        scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;
         padding:11px 13px 11px 16px;position:relative;cursor:pointer;
-        display:grid;grid-template-columns:1fr auto;gap:4px 12px;transition:border-color .12s}
+        display:grid;grid-template-columns:1fr auto;gap:4px 12px;transition:all .12s;
+        box-shadow:0 1px 2px rgba(12,30,60,.05)}
   .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;
         border-radius:8px 0 0 8px;background:var(--safe)}
   .card.hot::before{background:var(--hot)} .card.warn::before{background:var(--warn)}
   .card.done::before{background:var(--done)}
-  .card.done{opacity:.5}
-  .card:hover,.card.active{border-color:var(--lane)}
-  .card.active{box-shadow:0 0 0 1px var(--lane)}
-  .caseno{font:700 11px var(--mono);color:var(--lane);letter-spacing:.05em}
-  .t{grid-column:1;font-size:14px;font-weight:500;line-height:1.5}
+  .card.done{opacity:.55}
+  .card:hover,.card.active{border-color:var(--gold);box-shadow:0 2px 8px rgba(12,30,60,.10)}
+  .card.active{box-shadow:0 0 0 2px var(--gold)}
+  .caseno{font:700 11px var(--mono);color:var(--gold-d);letter-spacing:.05em}
+  .rg{display:inline-block;font-size:10px;padding:1px 6px;border-radius:3px;
+      background:var(--navy);color:#fff;margin-left:6px;vertical-align:1px}
+  .t{grid-column:1;font-size:14px;font-weight:500;line-height:1.5;color:var(--navy)}
   .meta{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:3px 14px;
-        font-size:11.5px;color:var(--dim);line-height:1.8}
-  .meta .loc{color:var(--safe)}
-  .meta .loc.approx{color:var(--dim)}
-  .meta b{color:var(--ink);font-weight:500;font-family:var(--mono)}
+        font-size:11.5px;color:var(--grayblue);line-height:1.8}
+  .meta .loc{color:var(--safe);font-weight:500}
+  .meta .loc.approx{color:var(--grayblue);font-weight:400}
+  .meta b{color:var(--navy);font-weight:500;font-family:var(--mono)}
   .cd{grid-row:1/3;grid-column:2;text-align:right;align-self:start}
   .cd .num{font:700 17px var(--mono);white-space:nowrap}
-  .cd .lab{font-size:10px;color:var(--dim)}
+  .cd .lab{font-size:10px;color:var(--grayblue)}
   .hot .cd .num{color:var(--hot)} .warn .cd .num{color:var(--warn)}
   .safe .cd .num{color:var(--safe)} .done .cd .num{color:var(--done)}
-  .empty{color:var(--dim);text-align:center;padding:50px 0;font-size:14px}
-  .listfoot{padding:8px 14px;border-top:1px solid var(--line);font-size:11px;
-            color:var(--dim);background:var(--panel)}
+  .empty{color:var(--grayblue);text-align:center;padding:50px 0;font-size:14px}
+  .listfoot{padding:8px 14px;border-top:1px solid var(--line2);font-size:11px;
+            color:var(--grayblue);background:var(--panel)}
 
   /* ── 地圖 ── */
-  .leaflet-container{background:#0e1613;font-family:inherit}
-  .leaflet-popup-content-wrapper{background:var(--panel2);color:var(--ink);
-        border:1px solid var(--lane);border-radius:8px}
-  .leaflet-popup-tip{background:var(--lane)}
+  .leaflet-container{background:#EAEEF4;font-family:inherit}
+  .leaflet-popup-content-wrapper{background:#fff;color:var(--navy);
+        border:1px solid var(--gold);border-radius:8px}
+  .leaflet-popup-tip{background:var(--gold)}
   .leaflet-popup-content{margin:10px 14px;font-size:12.5px;line-height:1.7}
   .leaflet-popup-content .pt{font-weight:700;font-size:13px}
-  .leaflet-popup-content .pc{font:700 11px var(--mono);color:var(--lane)}
-  .leaflet-popup-content a{color:var(--lane)}
-  .legend{position:absolute;right:14px;bottom:24px;z-index:900;background:var(--panel);
-        border:1px solid var(--line);border-radius:8px;padding:10px 14px;font-size:11.5px;
-        color:var(--dim);line-height:2}
+  .leaflet-popup-content .pc{font:700 11px var(--mono);color:var(--gold-d)}
+  .leaflet-popup-content a{color:var(--gold-d);font-weight:700}
+  .rglabel{font:900 13px "Noto Sans TC";color:var(--navy);letter-spacing:.3em;
+        text-shadow:0 0 6px #fff,0 0 6px #fff;white-space:nowrap;opacity:.75}
+  .legend{position:absolute;right:14px;bottom:24px;z-index:900;background:#fff;
+        border:1px solid var(--line2);border-radius:8px;padding:10px 14px;font-size:11.5px;
+        color:var(--grayblue);line-height:2;box-shadow:0 2px 8px rgba(12,30,60,.10)}
   .legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px}
-  .legend .o{background:transparent;border:2px dashed var(--dim)}
+  .legend .o{background:transparent;border:2px dashed var(--grayblue)}
 
   @media(max-width:900px){
     body{overflow:auto}
     main{grid-template-columns:1fr;grid-template-rows:45vh auto}
     #map{grid-row:1;height:45vh}
-    aside{grid-row:2;border-right:none;max-height:none}
+    aside{grid-row:2;border-right:none}
     #list{max-height:60vh}
     .stats{display:none}
   }
@@ -596,6 +617,13 @@ DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
     <div class="filters">
       <input type="search" id="q" placeholder="搜尋標案名稱、案號、地點…">
       <div class="chiprow" id="orgChips"><span class="lab">機關</span></div>
+      <div class="chiprow" id="rgChips"><span class="lab">區域</span>
+        <span class="chip on" data-v="all">全部</span>
+        <span class="chip" data-v="北部">北部</span>
+        <span class="chip" data-v="中部">中部</span>
+        <span class="chip" data-v="南部">南部</span>
+        <span class="chip" data-v="東部">東部</span>
+      </div>
       <div class="chiprow" id="stChips"><span class="lab">狀態</span>
         <span class="chip on" data-v="all">全部</span>
         <span class="chip" data-v="open">投標中</span>
@@ -625,14 +653,14 @@ DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
   <i style="background:var(--hot)"></i>3天內截止<br>
   <i style="background:var(--warn)"></i>7天內截止<br>
   <i style="background:var(--safe)"></i>時間充裕<br>
-  <i class="o"></i>約略位置(依機關)
+  <i class="o"></i>約略位置(依機關)<br>
+  <span style="color:#9AA4B2">─ ─ 分區界線為概略示意</span>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const DATA = __DATA__;
 const listEl = document.getElementById('list');
 
-/* ── 狀態計算 ── */
 function stateOf(d, now){
   if(!d.deadline) return {cls:'safe', ms:Infinity};
   const ms = new Date(d.deadline) - now;
@@ -655,9 +683,7 @@ function money(n){ if(!n) return '未公告';
   return n.toLocaleString();}
 function orgShort(o){return o.replace('交通部觀光署','').replace('交通部','').replace('經濟部','').replace('國家風景區',''); }
 
-/* ── 篩選狀態 ── */
-let F={q:'', orgs:new Set(), st:'all', cat:'all', bg:'all'};
-
+let F={q:'', orgs:new Set(), rg:'all', st:'all', cat:'all', bg:'all'};
 function chipify(elId, key){
   document.getElementById(elId).addEventListener('click', e=>{
     const c=e.target.closest('.chip'); if(!c) return;
@@ -665,7 +691,7 @@ function chipify(elId, key){
     c.classList.add('on'); F[key]=c.dataset.v; render();
   });
 }
-chipify('stChips','st'); chipify('catChips','cat'); chipify('bgChips','bg');
+chipify('rgChips','rg'); chipify('stChips','st'); chipify('catChips','cat'); chipify('bgChips','bg');
 document.getElementById('q').addEventListener('input', e=>{F.q=e.target.value.trim(); render();});
 
 const orgBox=document.getElementById('orgChips');
@@ -685,6 +711,7 @@ orgBox.addEventListener('click', e=>{
 function passes(d, st){
   if(!F.orgs.has(d.org)) return false;
   if(F.q && !((d.title||'')+(d.case_no||'')+(d.loc||'')).includes(F.q)) return false;
+  if(F.rg!=='all' && d.region!==F.rg) return false;
   if(F.st==='open'&&st.cls==='done') return false;
   if(F.st==='hot'&&st.cls!=='hot') return false;
   if(F.st==='done'&&st.cls!=='done') return false;
@@ -699,23 +726,39 @@ function passes(d, st){
   return true;
 }
 
-/* ── 地圖 ── */
-const map=L.map('map',{zoomControl:true, attributionControl:true}).setView([23.75,121.0],8);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+/* ── 地圖(淺色底圖) ── */
+const map=L.map('map').setView([23.75,121.0],8);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
   {attribution:'&copy; OpenStreetMap &copy; CARTO', maxZoom:18}).addTo(map);
-const layer=L.layerGroup().addTo(map);
-const COLORS={hot:'#ff6b5d',warn:'#f5c842',safe:'#57c88a',done:'#5d6d64'};
-let markers={};
 
+/* 四區示意圖層: 淡色底 + 灰藍虛線界線 + 區名 */
+const REGIONS=[
+  {name:'北部', color:'#0C1E3C', label:[25.02,121.30],
+   poly:[[25.45,120.60],[25.45,122.05],[24.35,122.05],[24.35,121.35],[24.62,121.30],[24.62,120.60]]},
+  {name:'中部', color:'#C9A45C', label:[24.05,120.70],
+   poly:[[24.62,119.95],[24.62,121.30],[24.35,121.35],[23.55,121.35],[23.55,119.95]]},
+  {name:'南部', color:'#2F9E6C', label:[22.90,120.35],
+   poly:[[23.55,119.90],[23.55,121.35],[23.35,121.35],[23.35,121.00],[21.80,121.00],[21.80,119.90]]},
+  {name:'東部', color:'#55637A', label:[23.30,121.42],
+   poly:[[24.35,121.35],[24.35,122.05],[21.80,122.05],[21.80,121.00],[23.35,121.00],[23.35,121.35]]},
+];
+REGIONS.forEach(r=>{
+  L.polygon(r.poly,{color:'#55637A',weight:1.6,dashArray:'6 6',
+    fillColor:r.color,fillOpacity:.06,interactive:false}).addTo(map);
+  L.marker(r.label,{interactive:false,icon:L.divIcon({className:'rglabel',html:r.name,iconSize:null})}).addTo(map);
+});
+
+const layer=L.layerGroup().addTo(map);
+const COLORS={hot:'#D6455A',warn:'#E08A2E',safe:'#2F9E6C',done:'#9AA4B2'};
+let markers={};
 function popupHtml(d){
   return '<div class="pc">'+(d.case_no||'')+'</div>'
     +'<div class="pt">'+d.title+'</div>'
-    +orgShort(d.org)+'<br>截止 '+fmtD(d.deadline)+' ・ 預算 '+money(d.budget)
+    +orgShort(d.org)+(d.region?' ・ '+d.region:'')+'<br>截止 '+fmtD(d.deadline)+' ・ 預算 '+money(d.budget)
     +(d.loc?'<br>📍 '+d.loc+(d.loc_src==='org'?'(約略)':''):'')
     +(d.url?'<br><a href="'+d.url+'" target="_blank" rel="noopener">開啟採購網公告 ↗</a>':'');
 }
 
-/* ── 渲染 ── */
 function render(){
   const now=new Date();
   const rows=DATA.map((d,i)=>({d,i,st:stateOf(d,now)}))
@@ -729,7 +772,8 @@ function render(){
   listEl.innerHTML = rows.length? rows.map(r=>{
     const d=r.d;
     return '<div class="card '+r.st.cls+'" data-i="'+r.i+'">'
-     +'<div><span class="caseno">'+(d.case_no||'—')+'</span></div>'
+     +'<div><span class="caseno">'+(d.case_no||'—')+'</span>'
+     +(d.region?'<span class="rg">'+d.region+'</span>':'')+'</div>'
      +'<div class="cd"><div class="num" data-cd="'+r.i+'">'+cdText(d,now)+'</div><div class="lab">距截止投標</div></div>'
      +'<div class="t">'+d.title+'</div>'
      +'<div class="meta">'
@@ -748,10 +792,11 @@ function render(){
     const approx = d.loc_src==='org';
     const mk=L.circleMarker([d.lat,d.lng],{
       radius: r.st.cls==='hot'?9:7,
-      color: COLORS[r.st.cls], weight: approx?2:2.5,
-      dashArray: approx?'3 4':null,
-      fillColor: COLORS[r.st.cls], fillOpacity: approx?0.15:0.8,
+      color:'#fff', weight:2,
+      fillColor: COLORS[r.st.cls], fillOpacity: approx?0.35:0.95,
+      dashArray: approx?'2 3':null,
     }).bindPopup(popupHtml(d));
+    mk.setStyle({color: approx?COLORS[r.st.cls]:'#fff'});
     mk.on('click', ()=>highlight(r.i, false));
     mk.addTo(layer); markers[r.i]=mk;
   });
@@ -778,14 +823,13 @@ listEl.addEventListener('click', e=>{
   const c=e.target.closest('.card'); if(c) highlight(+c.dataset.i, true);
 });
 
-/* 倒數每秒更新(只更新數字, 不重繪) */
 setInterval(()=>{
   const now=new Date();
   listEl.querySelectorAll('[data-cd]').forEach(el=>{
     el.textContent=cdText(DATA[+el.dataset.cd], now);
   });
 }, 1000);
-setInterval(render, 60000);  // 每分鐘重算狀態顏色
+setInterval(render, 60000);
 render();
 </script>
 </body>
@@ -863,6 +907,8 @@ def run_demo():
     for it in DEMO_ITEMS:
         locate(it)
     jitter(DEMO_ITEMS)
+    for it in DEMO_ITEMS:
+        it["region"] = region_of(it.get("lat"), it.get("lng"))
     build_dashboard(DEMO_ITEMS, dropped_count=2)
     print("(示範模式：以上為假資料，僅供預覽畫面)")
 
@@ -916,6 +962,8 @@ def run():
     for it in kept:
         locate(it)
     jitter(kept)
+    for it in kept:
+        it["region"] = region_of(it.get("lat"), it.get("lng"))
     build_dashboard(kept, len(dropped))
     print(f"共 {len(kept)} 件符合條件 (新案 {len(new_items)} 件、3天內截止 {len(hot)} 件)")
     notify(cfg, new_items, hot)
