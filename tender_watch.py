@@ -690,6 +690,13 @@ DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
         <span class="chip" data-v="l">2,700萬–9,000萬</span>
         <span class="chip" data-v="na">未公告</span>
       </div>
+      <div class="chiprow" id="sortChips"><span class="lab">排序</span>
+        <span class="chip on" data-v="urgent">最急先</span>
+        <span class="chip" data-v="relaxed">最寬鬆先</span>
+        <span class="chip" data-v="budget_hi">預算高→低</span>
+        <span class="chip" data-v="budget_lo">預算低→高</span>
+        <span class="chip" data-v="newest">最新公告</span>
+      </div>
     </div>
     <div id="list"></div>
     <div class="listfoot" id="foot"></div>
@@ -734,7 +741,7 @@ function daysSincePub(d, now){
 }
 function orgShort(o){return o.replace('交通部觀光署','').replace('交通部','').replace('經濟部','').replace('國家風景區','').replace('政府',''); }
 
-let F={q:'', orgs:new Set(), rg:'all', st:'all', cat:'all', bg:'all'};
+let F={q:'', orgs:new Set(), rg:'all', st:'all', cat:'all', bg:'all', sort:'urgent'};
 function chipify(elId, key){
   document.getElementById(elId).addEventListener('click', e=>{
     const c=e.target.closest('.chip'); if(!c) return;
@@ -742,7 +749,7 @@ function chipify(elId, key){
     c.classList.add('on'); F[key]=c.dataset.v; render();
   });
 }
-chipify('rgChips','rg'); chipify('stChips','st'); chipify('catChips','cat'); chipify('bgChips','bg');
+chipify('rgChips','rg'); chipify('stChips','st'); chipify('catChips','cat'); chipify('bgChips','bg'); chipify('sortChips','sort');
 document.getElementById('q').addEventListener('input', e=>{F.q=e.target.value.trim(); render();});
 
 /* ── 機關兩層式篩選: 母系統(帶件數) -> ▾ 展開分支 ── */
@@ -870,9 +877,21 @@ function render(){
   const rows=DATA.map((d,i)=>({d,i,st:stateOf(d,now)}))
     .filter(r=>passes(r.d,r.st))
     .sort((a,b)=>{
+      // 已截止一律沉底
       const ad=a.st.cls==='done', bd=b.st.cls==='done';
       if(ad!==bd) return ad?1:-1;
-      return a.st.ms-b.st.ms;
+      const bA=a.d.budget, bB=b.d.budget;
+      switch(F.sort){
+        case 'relaxed':   return b.st.ms-a.st.ms;                       // 寬鬆先(剩越多越前)
+        case 'budget_hi': return (bB??-1)-(bA??-1);                     // 預算高先(未公告墊底)
+        case 'budget_lo': return (bA??Infinity)-(bB??Infinity);        // 預算低先(未公告墊底)
+        case 'newest': {                                               // 公告日最新先
+          const pa=a.d.publish_date?new Date(a.d.publish_date):0;
+          const pb=b.d.publish_date?new Date(b.d.publish_date):0;
+          return pb-pa;
+        }
+        default:          return a.st.ms-b.st.ms;                       // urgent 最急先
+      }
     });
 
   listEl.innerHTML = rows.length? rows.map(r=>{
